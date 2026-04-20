@@ -24,7 +24,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   --bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:#1e293b;
   --text:#e2e8f0;--text-muted:#94a3b8;--accent:#38bdf8;--accent-glow:rgba(56,189,248,.15);
   --green:#22c55e;--green-glow:rgba(34,197,94,.2);--red:#ef4444;--red-glow:rgba(239,68,68,.25);
-  --yellow:#facc15;--radius:12px;--font:'Inter',sans-serif;--mono:'JetBrains Mono',monospace;
+  --yellow:#facc15;--yellow-glow:rgba(250,204,21,.25);--radius:12px;--font:'Inter',sans-serif;--mono:'JetBrains Mono',monospace;
 }
 html{font-size:16px}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
@@ -58,6 +58,9 @@ main{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-co
 .btn-start:disabled{opacity:.5;cursor:not-allowed;filter:none;box-shadow:none}
 .btn-stop{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;box-shadow:0 4px 20px var(--red-glow)}
 .btn-stop:hover{box-shadow:0 6px 30px rgba(239,68,68,.4);filter:brightness(1.1)}
+.btn-reverse{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;box-shadow:0 4px 20px var(--yellow-glow)}
+.btn-reverse:hover{box-shadow:0 6px 30px rgba(245,158,11,.4);filter:brightness(1.1)}
+.dir-badge{display:inline-flex;align-items:center;gap:.35rem;padding:.3rem .8rem;border-radius:999px;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--surface2);border:1px solid var(--border);color:var(--yellow);margin-left:.5rem;transition:all .3s}
 .monitor{grid-column:2}
 @media(max-width:860px){.monitor{grid-column:1}}
 .big-value{font-family:var(--mono);font-size:3.5rem;font-weight:700;text-align:center;padding:1rem 0 .25rem;color:var(--accent);text-shadow:0 0 30px var(--accent-glow);line-height:1}
@@ -103,6 +106,9 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
       <button class="btn btn-start" id="btnStart" onclick="startInfusion()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Start Infusion</button>
       <button class="btn btn-stop" id="btnStop" onclick="emergencyStop()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>Emergency Stop</button>
     </div>
+    <div class="btn-row">
+      <button class="btn btn-reverse" id="btnReverse" onclick="reverseDirection()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Reverse Direction<span class="dir-badge" id="dirBadge">⬇ PUSH</span></button>
+    </div>
   </div>
   <div class="card monitor" id="monitorPanel">
     <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1 12 4 5 7 9 10 3 13 8 15 6"/></svg>Real-Time Monitoring</div>
@@ -124,15 +130,17 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
 <footer>DIY Syringe Pump Controller &mdash; ESP32 Dashboard &copy; 2026</footer>
 <script>
 let pollingInterval=null,targetVolume=0;
-const elDelivered=document.getElementById('deliveredVal'),elFill=document.getElementById('progressFill'),elPct=document.getElementById('progressPct'),elTarget=document.getElementById('progressTarget'),elChip=document.getElementById('statusChip'),elChipText=document.getElementById('statusText'),elToast=document.getElementById('toast');
+const elDelivered=document.getElementById('deliveredVal'),elFill=document.getElementById('progressFill'),elPct=document.getElementById('progressPct'),elTarget=document.getElementById('progressTarget'),elChip=document.getElementById('statusChip'),elChipText=document.getElementById('statusText'),elToast=document.getElementById('toast'),elDirBadge=document.getElementById('dirBadge');
 const alarms={occlusion:{card:document.getElementById('alarmOcclusion'),status:document.getElementById('occlusionStatus')},empty:{card:document.getElementById('alarmEmpty'),status:document.getElementById('emptyStatus')},tremor:{card:document.getElementById('alarmTremor'),status:document.getElementById('tremorStatus')}};
 function showToast(m,t){elToast.textContent=m;elToast.className='toast '+t+' show';setTimeout(()=>elToast.classList.remove('show'),3000)}
 async function startInfusion(){const v=parseFloat(document.getElementById('targetVol').value),r=parseFloat(document.getElementById('flowRate').value);if(!v||v<=0||!r||r<=0){showToast('Please enter valid volume and flow rate.','error');return}targetVolume=v;elTarget.textContent='Target: '+v.toFixed(1)+' mL';try{const res=await fetch('/set_parameters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_vol:v,flow_rate:r})});if(!res.ok)throw new Error();showToast('Infusion started successfully.','success');setRunningState(true);startPolling()}catch(e){showToast('Failed to connect to pump.','error')}}
 async function emergencyStop(){try{await fetch('/emergency_stop',{method:'POST'})}catch(_){}stopPolling();setRunningState(false);showToast('EMERGENCY STOP activated!','error')}
+async function reverseDirection(){try{const res=await fetch('/reverse_direction',{method:'POST'});if(!res.ok)throw new Error();const d=await res.json();const dir=d.direction||'unknown';updateDirBadge(dir.includes('PUSH')||dir.includes('push')?'push':'pull');showToast('Direction: '+dir,'success')}catch(e){showToast('Failed to reverse direction.','error')}}
+function updateDirBadge(dir){if(dir==='push'){elDirBadge.textContent='\u2B07 PUSH';elDirBadge.style.color='var(--yellow)'}else{elDirBadge.textContent='\u2B06 PULL';elDirBadge.style.color='var(--accent)'}}
 function startPolling(){stopPolling();pollingInterval=setInterval(fetchStatus,500)}
 function stopPolling(){if(pollingInterval){clearInterval(pollingInterval);pollingInterval=null}}
 async function fetchStatus(){try{const res=await fetch('/status');if(!res.ok)throw new Error();const d=await res.json();updateUI(d)}catch(_){}}
-function updateUI(d){const vol=d.delivered_vol??0;elDelivered.textContent=vol.toFixed(2);const pct=targetVolume>0?Math.min((vol/targetVolume)*100,100):0;elFill.style.width=pct.toFixed(1)+'%';elPct.textContent=pct.toFixed(1)+' %';setRunningState(!!d.running);if(!d.running&&pollingInterval)stopPolling();setAlarm('occlusion',!!d.occlusion);setAlarm('empty',!!d.empty);setAlarm('tremor',!!d.tremor)}
+function updateUI(d){const vol=d.delivered_vol??0;elDelivered.textContent=vol.toFixed(2);const pct=targetVolume>0?Math.min((vol/targetVolume)*100,100):0;elFill.style.width=pct.toFixed(1)+'%';elPct.textContent=pct.toFixed(1)+' %';setRunningState(!!d.running);if(!d.running&&pollingInterval)stopPolling();setAlarm('occlusion',!!d.occlusion);setAlarm('empty',!!d.empty);setAlarm('tremor',!!d.tremor);if(d.direction)updateDirBadge(d.direction)}
 function setAlarm(k,a){const al=alarms[k];if(a){al.card.classList.add('active');al.status.textContent='\u26A0 WARNING'}else{al.card.classList.remove('active');al.status.textContent='Normal'}}
 function setRunningState(r){if(r){elChip.classList.add('running');elChipText.textContent='Running';document.getElementById('btnStart').disabled=true}else{elChip.classList.remove('running');elChipText.textContent='Idle';document.getElementById('btnStart').disabled=false}}
 </script>

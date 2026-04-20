@@ -185,6 +185,9 @@ float targetVolume_mL  = 0.0;             // Desired infusion volume (mL)
 float flowRate_mLmin   = 0.0;             // Desired flow rate (mL/min)
 float deliveredVol_mL  = 0.0;             // Current delivered volume (mL)
 
+// Motor direction: -1 = push (dispense), +1 = pull (retract)
+int   motorDirection   = -1;
+
 bool  mpuAvailable     = false;           // Did MPU6050 init succeed?
 
 // ── FSR pressure reading ──
@@ -375,6 +378,27 @@ void setupWebServer() {
     request->send(200, "application/json", "{\"status\":\"stopped\"}");
   });
 
+  // ── POST /reverse_direction ──
+  //    Toggles motor direction between push (dispense) and pull (retract).
+  //    If the motor is running, the speed is immediately reapplied with the new direction.
+  server.on("/reverse_direction", HTTP_POST, [](AsyncWebServerRequest *request) {
+    motorDirection *= -1;
+    const char* dirLabel = (motorDirection < 0) ? "PUSH (dispense)" : "PULL (retract)";
+    Serial.printf("[Motor] Direction reversed → %s\n", dirLabel);
+
+    // If motor is currently running, reapply speed with new direction
+    if (motorRunning) {
+      float stepsPerSec = (flowRate_mLmin * STEPS_PER_ML) / 60.0;
+      if (stepsPerSec > stepper.maxSpeed()) stepsPerSec = stepper.maxSpeed();
+      stepper.setSpeed(stepsPerSec * motorDirection);
+    }
+
+    String resp = "{\"status\":\"ok\",\"direction\":\"";
+    resp += dirLabel;
+    resp += "\"}";
+    request->send(200, "application/json", resp);
+  });
+
   // ── GET /status ──
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     // Build JSON response
@@ -384,6 +408,7 @@ void setupWebServer() {
     doc["empty"]             = alarmEmpty;
     doc["tremor"]            = alarmTremor;
     doc["running"]           = motorRunning;
+    doc["direction"]         = (motorDirection < 0) ? "push" : "pull";
     doc["fsr_raw"]           = fsrRawValue;
     doc["fsr_pressure"]      = fsrPressure;
     doc["measured_flow_rate"] = measuredFlowRate_mLmin;
@@ -423,11 +448,12 @@ void startMotor() {
     Serial.printf("[Motor] Speed clamped to max: %.1f steps/sec\n", stepsPerSec);
   }
 
-  stepper.setSpeed(stepsPerSec);
+  stepper.setSpeed(stepsPerSec * motorDirection);
   motorRunning = true;
 
-  Serial.printf("[Motor] Started — %.1f steps/sec (%.2f mL/min)\n",
-                stepsPerSec, flowRate_mLmin);
+  Serial.printf("[Motor] Started — %.1f steps/sec (%.2f mL/min, dir=%s)\n",
+                stepsPerSec, flowRate_mLmin,
+                (motorDirection < 0) ? "PUSH" : "PULL");
 }
 
 /*
