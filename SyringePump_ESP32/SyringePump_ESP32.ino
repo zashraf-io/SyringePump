@@ -120,12 +120,18 @@
 // ─────────────────────────────────────────────
 
 /*
- *  FSR_OCCLUSION_THRESHOLD:
- *    Raw ADC value (0–4095) above which the FSR indicates occlusion.
+ *  FSR_EMPTY_THRESHOLD:
+ *    Raw ADC value (0–4095) above which the FSR indicates
+ *    that the syringe plunger has bottomed out (syringe empty).
+ *    The FSR is placed so the plunger presses it at end of travel.
  *    Higher pressure → higher ADC value (with voltage divider).
- *    *** CALIBRATE with your tubing and FSR placement. ***
+ *
+ *    Start with a LOW value (e.g. 500) and raise it if you get
+ *    false triggers. Check Serial Monitor for "[FSR]" debug lines
+ *    to see the actual ADC readings from your sensor.
+ *    *** CALIBRATE with your hardware. ***
  */
-#define FSR_OCCLUSION_THRESHOLD 2500
+#define FSR_EMPTY_THRESHOLD 500
 
 // ─────────────────────────────────────────────
 //  YF-S401 FLOW RATE SENSOR CONSTANTS
@@ -480,24 +486,24 @@ void readSensors() {
     haltMotor("Target volume reached");
   }
 
-  // ── 3. FSR pressure sensor → occlusion detection ──
-  //    When the tube is blocked, pressure builds on the FSR.
+  // ── 3. FSR pressure sensor → syringe empty detection ──
+  //    The FSR is positioned so the plunger presses it when the
+  //    syringe is empty. When force is detected → emergency stop.
   fsrRawValue = readFSR();
   fsrPressure = (float)fsrRawValue / 4095.0 * 100.0; // 0–100 arbitrary units
-  if (fsrRawValue >= FSR_OCCLUSION_THRESHOLD) {
-    if (!alarmOcclusion) {
-      alarmOcclusion = true;
-      haltMotor("OCCLUSION detected (FSR pressure high)");
-      Serial.printf("[FSR] Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
-    }
+
+  // Debug: print FSR value periodically so user can calibrate threshold
+  static unsigned long lastFsrDebug = 0;
+  if (millis() - lastFsrDebug >= 1000) {
+    lastFsrDebug = millis();
+    Serial.printf("[FSR] Raw: %d / 4095  (threshold: %d)\n", fsrRawValue, FSR_EMPTY_THRESHOLD);
   }
 
-  // ── 4. Syringe empty limit switch (active LOW) ──
-  //    Triggered when the plunger reaches the end of the barrel.
-  if (digitalRead(EMPTY_PIN) == LOW) {
+  if (fsrRawValue >= FSR_EMPTY_THRESHOLD) {
     if (!alarmEmpty) {
       alarmEmpty = true;
-      haltMotor("SYRINGE EMPTY detected");
+      haltMotor("SYRINGE EMPTY detected (FSR pressure)");
+      Serial.printf("[FSR] TRIGGERED! Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
     }
   }
 
