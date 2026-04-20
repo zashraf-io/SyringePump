@@ -27,9 +27,11 @@
  *  Features:
  *    • Wi-Fi SoftAP ("SyringePump_Control")
  *    • ESPAsyncWebServer hosting the dashboard from PROGMEM
- *    • Non-blocking AccelStepper motor control
+ *    • Non-blocking AccelStepper motor control (28BYJ-48 via ULN2003)
  *    • Linear potentiometer volume sensing (ADC)
- *    • Occlusion & syringe-empty limit switches (active LOW)
+ *    • FSR pressure sensor for occlusion detection (ADC)
+ *    • YF-S401 flow rate sensor (interrupt-driven pulse counting)
+ *    • Syringe-empty limit switch (active LOW)
  *    • MPU6050 accelerometer tremor detection (I2C)
  *    • JSON REST API: POST /set_parameters, GET /status,
  *      POST /emergency_stop
@@ -42,11 +44,13 @@
  *    5. ArduinoJson        (by Benoit Blanchon, v6+)
  *
  *  Hardware:
- *    Motor Driver : A4988 — STEP=14, DIR=27
+ *    Motor       : 28BYJ-48 via ULN2003 driver
+ *                   IN1=14, IN2=27, IN3=26, IN4=25
  *    Potentiometer: GPIO 34  (ADC1, analog volume sensing)
- *    Occlusion SW : GPIO 32  (active LOW, internal pull-up)
- *    Empty SW     : GPIO 33  (active LOW, internal pull-up)
- *    MPU6050      : SDA=21, SCL=22 (default I2C)
+ *    FSR Sensor  : GPIO 35  (ADC1, analog pressure sensing)
+ *    Flow Sensor : GPIO 4   (YF-S401, digital pulse output)
+ *    Empty SW    : GPIO 33  (active LOW, internal pull-up)
+ *    MPU6050     : SDA=21, SCL=22 (default I2C)
  *
  *  Author : Auto-generated for Ziad's Medical Equipment project
  *  Date   : 2026-04-18
@@ -66,10 +70,19 @@
 // ─────────────────────────────────────────────
 //  PIN DEFINITIONS
 // ─────────────────────────────────────────────
-#define STEP_PIN       14                  // A4988 STEP input
-#define DIR_PIN        27                  // A4988 DIR  input
-#define POT_PIN        34                  // Linear potentiometer (volume)
-#define OCCLUSION_PIN  32                  // Limit switch – occlusion (NC, active LOW)
+
+// 28BYJ-48 stepper via ULN2003 driver board
+#define MOTOR_IN1      14                  // ULN2003 IN1
+#define MOTOR_IN2      27                  // ULN2003 IN2
+#define MOTOR_IN3      26                  // ULN2003 IN3
+#define MOTOR_IN4      25                  // ULN2003 IN4
+
+// Sensors
+#define POT_PIN        34                  // Linear potentiometer (volume) — ADC1
+#define FSR_PIN        35                  // FSR pressure sensor — ADC1
+#define FLOW_PIN       4                   // YF-S401 flow rate sensor (digital pulse)
+
+// Switches
 #define EMPTY_PIN      33                  // Limit switch – syringe empty (NC, active LOW)
 
 // ─────────────────────────────────────────────
@@ -95,12 +108,38 @@
 /*
  *  STEPS_PER_ML:
  *    Number of stepper motor steps required to dispense 1 mL.
- *    Depends on: motor step angle, micro-stepping setting on A4988,
- *    lead-screw pitch, and syringe barrel diameter.
- *    Example: 200 steps/rev * 16 microsteps / 0.8mm pitch / barrel area
+ *    The 28BYJ-48 has 2048 half-steps per revolution (with its
+ *    built-in 1:64 gear reduction). Actual value depends on your
+ *    lead-screw pitch and syringe barrel diameter.
  *    *** You MUST calibrate this with your hardware. ***
  */
-#define STEPS_PER_ML    200.0
+#define STEPS_PER_ML    2048.0
+
+// ─────────────────────────────────────────────
+//  FSR PRESSURE SENSOR CONSTANTS
+// ─────────────────────────────────────────────
+
+/*
+ *  FSR_OCCLUSION_THRESHOLD:
+ *    Raw ADC value (0–4095) above which the FSR indicates occlusion.
+ *    Higher pressure → higher ADC value (with voltage divider).
+ *    *** CALIBRATE with your tubing and FSR placement. ***
+ */
+#define FSR_OCCLUSION_THRESHOLD 2500
+
+// ─────────────────────────────────────────────
+//  YF-S401 FLOW RATE SENSOR CONSTANTS
+// ─────────────────────────────────────────────
+
+/*
+ *  FLOW_CALIBRATION_FACTOR:
+ *    The YF-S401 outputs ~98 pulses per litre (datasheet: 98 pulses/L).
+ *    Frequency (Hz) = flow rate (L/min) × 98.
+ *    So: flow (L/min) = frequency / 98
+ *        flow (mL/min) = frequency / 98 * 1000 = frequency * 10.204
+ *    *** Adjust based on your calibration. ***
+ */
+#define FLOW_CALIBRATION_FACTOR 98.0
 
 // ─────────────────────────────────────────────
 //  MPU6050 CONSTANTS
@@ -127,8 +166,9 @@ const char* AP_PASSWORD = "";              // Open network (no password)
 //  GLOBAL OBJECTS
 // ─────────────────────────────────────────────
 
-// Stepper motor (driver interface: step + direction pins)
-AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+// 28BYJ-48 stepper in half-step mode via ULN2003 (4 pins)
+// Pin order for AccelStepper HALF4WIRE: IN1, IN3, IN2, IN4
+AccelStepper stepper(AccelStepper::HALF4WIRE, MOTOR_IN1, MOTOR_IN3, MOTOR_IN2, MOTOR_IN4);
 
 // Async web server on port 80
 AsyncWebServer server(80);
@@ -137,7 +177,7 @@ AsyncWebServer server(80);
 //  SYSTEM STATE (volatile where ISR-adjacent)
 // ─────────────────────────────────────────────
 volatile bool motorRunning    = false;     // Is the motor actively stepping?
-volatile bool alarmOcclusion  = false;     // Occlusion detected?
+volatile bool alarmOcclusion  = false;     // Occlusion detected (via FSR)?
 volatile bool alarmEmpty      = false;     // Syringe empty detected?
 volatile bool alarmTremor     = false;     // Tremor spike detected?
 
@@ -147,14 +187,29 @@ float deliveredVol_mL  = 0.0;             // Current delivered volume (mL)
 
 bool  mpuAvailable     = false;           // Did MPU6050 init succeed?
 
+// ── FSR pressure reading ──
+int   fsrRawValue      = 0;               // Latest FSR ADC reading (0–4095)
+float fsrPressure      = 0.0;             // Mapped pressure (arbitrary units)
+
+// ── YF-S401 flow rate sensor ──
+volatile unsigned long flowPulseCount = 0; // ISR-incremented pulse counter
+unsigned long lastFlowCalc_ms  = 0;        // Last time we computed flow rate
+float measuredFlowRate_mLmin   = 0.0;      // Computed flow rate from sensor
+const unsigned long FLOW_CALC_INTERVAL_MS = 1000; // Recalculate every 1 sec
+
 // Timing for non-blocking sensor reads
 unsigned long lastSensorCheck_ms = 0;
 const unsigned long SENSOR_INTERVAL_MS = 50;  // Check sensors every 50 ms
 
-// ADC smoothing
+// ADC smoothing (potentiometer)
 #define ADC_SAMPLES 8
 int adcBuffer[ADC_SAMPLES];
 int adcIndex = 0;
+
+// ADC smoothing (FSR)
+#define FSR_SAMPLES 8
+int fsrBuffer[FSR_SAMPLES];
+int fsrIndex = 0;
 
 // ─────────────────────────────────────────────
 //  FORWARD DECLARATIONS
@@ -162,11 +217,15 @@ int adcIndex = 0;
 void   setupWiFiAP();
 void   setupWebServer();
 void   setupMPU6050();
+void   setupFlowSensor();
 void   readSensors();
 float  readPotVolume();
+int    readFSR();
+void   computeFlowRate();
 float  readMPU6050Magnitude();
 void   haltMotor(const char* reason);
 void   startMotor();
+void   IRAM_ATTR flowPulseISR();
 
 // ═════════════════════════════════════════════
 //  SETUP
@@ -180,19 +239,24 @@ void setup() {
   Serial.println("══════════════════════════════════════");
 
   // ── Pin modes ──
-  pinMode(OCCLUSION_PIN, INPUT_PULLUP);    // Limit switch, NC to GND
   pinMode(EMPTY_PIN,     INPUT_PULLUP);    // Limit switch, NC to GND
-  // POT_PIN is ADC — no pinMode needed for analogRead
+  // POT_PIN (34) and FSR_PIN (35) are ADC — no pinMode needed for analogRead
 
-  // ── Stepper defaults ──
-  stepper.setMaxSpeed(2000);               // Steps/sec upper limit
-  stepper.setAcceleration(500);            // Steps/sec² (smooth ramp)
+  // ── Stepper defaults (28BYJ-48 is slow: ~500 half-steps/sec max) ──
+  stepper.setMaxSpeed(500);                // Half-steps/sec upper limit
+  stepper.setAcceleration(200);            // Half-steps/sec² (smooth ramp)
   stepper.setSpeed(0);                     // Start stopped
 
-  // ── Initialize ADC buffer ──
+  // ── Initialize ADC buffers ──
   for (int i = 0; i < ADC_SAMPLES; i++) {
     adcBuffer[i] = analogRead(POT_PIN);
   }
+  for (int i = 0; i < FSR_SAMPLES; i++) {
+    fsrBuffer[i] = analogRead(FSR_PIN);
+  }
+
+  // ── Flow sensor (YF-S401) ──
+  setupFlowSensor();
 
   // ── I2C & MPU6050 ──
   Wire.begin();                            // SDA=21, SCL=22
@@ -223,6 +287,12 @@ void loop() {
   if (now - lastSensorCheck_ms >= SENSOR_INTERVAL_MS) {
     lastSensorCheck_ms = now;
     readSensors();
+  }
+
+  // ── 3. Compute flow rate from YF-S401 (every 1 sec) ──
+  if (now - lastFlowCalc_ms >= FLOW_CALC_INTERVAL_MS) {
+    computeFlowRate();
+    lastFlowCalc_ms = now;
   }
 }
 
@@ -308,12 +378,15 @@ void setupWebServer() {
   // ── GET /status ──
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     // Build JSON response
-    StaticJsonDocument<256> doc;
-    doc["delivered_vol"] = deliveredVol_mL;
-    doc["occlusion"]     = alarmOcclusion;
-    doc["empty"]         = alarmEmpty;
-    doc["tremor"]        = alarmTremor;
-    doc["running"]       = motorRunning;
+    StaticJsonDocument<512> doc;
+    doc["delivered_vol"]     = deliveredVol_mL;
+    doc["occlusion"]         = alarmOcclusion;
+    doc["empty"]             = alarmEmpty;
+    doc["tremor"]            = alarmTremor;
+    doc["running"]           = motorRunning;
+    doc["fsr_raw"]           = fsrRawValue;
+    doc["fsr_pressure"]      = fsrPressure;
+    doc["measured_flow_rate"] = measuredFlowRate_mLmin;
 
     String json;
     serializeJson(doc, json);
@@ -381,12 +454,15 @@ void readSensors() {
     haltMotor("Target volume reached");
   }
 
-  // ── 3. Occlusion limit switch (active LOW) ──
-  //    When the tube is blocked, pressure builds and triggers the switch.
-  if (digitalRead(OCCLUSION_PIN) == LOW) {
+  // ── 3. FSR pressure sensor → occlusion detection ──
+  //    When the tube is blocked, pressure builds on the FSR.
+  fsrRawValue = readFSR();
+  fsrPressure = (float)fsrRawValue / 4095.0 * 100.0; // 0–100 arbitrary units
+  if (fsrRawValue >= FSR_OCCLUSION_THRESHOLD) {
     if (!alarmOcclusion) {
       alarmOcclusion = true;
-      haltMotor("OCCLUSION detected");
+      haltMotor("OCCLUSION detected (FSR pressure high)");
+      Serial.printf("[FSR] Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
     }
   }
 
@@ -444,6 +520,86 @@ float readPotVolume() {
   if (volume > SYRINGE_MAX_ML) volume = SYRINGE_MAX_ML;
 
   return volume;
+}
+
+// ═════════════════════════════════════════════
+//  FSR PRESSURE SENSOR (with smoothing)
+// ═════════════════════════════════════════════
+
+/*
+ *  readFSR()
+ *  Reads the FSR analog value, applies a rolling average filter,
+ *  and returns the smoothed ADC value (0–4095).
+ *
+ *  Wiring: FSR in series with a 10kΩ resistor (voltage divider)
+ *    FSR one leg → 3.3V
+ *    FSR other leg → FSR_PIN (GPIO 35) AND through 10kΩ to GND
+ */
+int readFSR() {
+  // Store new sample in circular buffer
+  fsrBuffer[fsrIndex] = analogRead(FSR_PIN);
+  fsrIndex = (fsrIndex + 1) % FSR_SAMPLES;
+
+  // Compute rolling average
+  long sum = 0;
+  for (int i = 0; i < FSR_SAMPLES; i++) {
+    sum += fsrBuffer[i];
+  }
+  return (int)(sum / FSR_SAMPLES);
+}
+
+// ═════════════════════════════════════════════
+//  YF-S401 FLOW RATE SENSOR
+// ═════════════════════════════════════════════
+
+/*
+ *  flowPulseISR()
+ *  Interrupt Service Routine — increments pulse count on each
+ *  rising edge from the YF-S401 Hall-effect sensor.
+ */
+void IRAM_ATTR flowPulseISR() {
+  flowPulseCount++;
+}
+
+/*
+ *  setupFlowSensor()
+ *  Configures the flow sensor pin and attaches the interrupt.
+ *  The YF-S401 outputs an open-collector signal — use INPUT_PULLUP.
+ */
+void setupFlowSensor() {
+  Serial.print("[FlowSensor] Initializing YF-S401... ");
+  pinMode(FLOW_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowPulseISR, RISING);
+  lastFlowCalc_ms = millis();
+  Serial.println("OK");
+}
+
+/*
+ *  computeFlowRate()
+ *  Called every FLOW_CALC_INTERVAL_MS (1 sec).
+ *  Reads the accumulated pulse count, computes frequency,
+ *  and converts to mL/min using the calibration factor.
+ *
+ *  YF-S401: ~98 pulses per litre
+ *    frequency (Hz) = pulses / elapsed_seconds
+ *    flow (L/min)   = frequency / FLOW_CALIBRATION_FACTOR
+ *    flow (mL/min)  = flow (L/min) * 1000
+ */
+void computeFlowRate() {
+  // Atomically read and reset the pulse counter
+  noInterrupts();
+  unsigned long pulses = flowPulseCount;
+  flowPulseCount = 0;
+  interrupts();
+
+  // Compute flow rate
+  float frequency = (float)pulses; // We calculate every 1 sec, so Hz ≈ count
+  measuredFlowRate_mLmin = (frequency / FLOW_CALIBRATION_FACTOR) * 1000.0;
+
+  if (measuredFlowRate_mLmin > 0.01) {
+    Serial.printf("[FlowSensor] %.2f mL/min (%lu pulses)\n",
+                  measuredFlowRate_mLmin, pulses);
+  }
 }
 
 // ═════════════════════════════════════════════
