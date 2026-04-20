@@ -1,0 +1,143 @@
+/*
+ * webpage.h
+ * ─────────────────────────────────────────────
+ * Auto-generated PROGMEM string of index.html
+ * for the Syringe Pump Controller dashboard.
+ * ─────────────────────────────────────────────
+ */
+
+#ifndef WEBPAGE_H
+#define WEBPAGE_H
+
+const char INDEX_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Syringe Pump Controller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:#1e293b;
+  --text:#e2e8f0;--text-muted:#94a3b8;--accent:#38bdf8;--accent-glow:rgba(56,189,248,.15);
+  --green:#22c55e;--green-glow:rgba(34,197,94,.2);--red:#ef4444;--red-glow:rgba(239,68,68,.25);
+  --yellow:#facc15;--radius:12px;--font:'Inter',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+html{font-size:16px}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
+header{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);border-bottom:1px solid var(--border);padding:1rem 2rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem}
+.logo{display:flex;align-items:center;gap:.75rem}
+.logo svg{width:36px;height:36px;filter:drop-shadow(0 0 6px var(--accent))}
+.logo h1{font-size:1.25rem;font-weight:700;letter-spacing:-.02em}
+.logo span{color:var(--accent)}
+.status-chip{display:inline-flex;align-items:center;gap:.4rem;padding:.35rem .9rem;border-radius:999px;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;background:var(--surface2);border:1px solid var(--border);color:var(--text-muted);transition:all .3s}
+.status-chip.running{background:var(--green-glow);border-color:var(--green);color:var(--green)}
+.status-chip .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.status-chip.running .dot{animation:pulse-dot 1.2s ease-in-out infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+main{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;position:relative;overflow:hidden;transition:border-color .3s,box-shadow .3s}
+.card:hover{border-color:rgba(56,189,248,.25);box-shadow:0 0 20px var(--accent-glow)}
+.card-title{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
+.card-title svg{width:16px;height:16px;opacity:.6}
+.control-panel{grid-column:1}
+.input-group{margin-bottom:1rem}
+.input-group label{display:block;font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:.35rem}
+.input-group input{width:100%;padding:.7rem 1rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:var(--mono);font-size:1rem;font-weight:500;outline:none;transition:border-color .2s,box-shadow .2s}
+.input-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.input-group .unit{font-size:.7rem;color:var(--text-muted);margin-top:.25rem}
+.btn-row{display:flex;gap:.75rem;margin-top:1.25rem;flex-wrap:wrap}
+.btn{flex:1;min-width:140px;padding:.85rem 1.2rem;border:none;border-radius:10px;font-family:var(--font);font-size:.9rem;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;display:inline-flex;align-items:center;justify-content:center;gap:.5rem;transition:transform .15s,box-shadow .3s,filter .2s;position:relative;overflow:hidden}
+.btn:active{transform:scale(.97)}
+.btn-start{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;box-shadow:0 4px 20px var(--green-glow)}
+.btn-start:hover{box-shadow:0 6px 30px rgba(34,197,94,.35);filter:brightness(1.1)}
+.btn-start:disabled{opacity:.5;cursor:not-allowed;filter:none;box-shadow:none}
+.btn-stop{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;box-shadow:0 4px 20px var(--red-glow)}
+.btn-stop:hover{box-shadow:0 6px 30px rgba(239,68,68,.4);filter:brightness(1.1)}
+.monitor{grid-column:2}
+@media(max-width:860px){.monitor{grid-column:1}}
+.big-value{font-family:var(--mono);font-size:3.5rem;font-weight:700;text-align:center;padding:1rem 0 .25rem;color:var(--accent);text-shadow:0 0 30px var(--accent-glow);line-height:1}
+.big-label{text-align:center;font-size:.75rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.08em;margin-bottom:1.25rem}
+.progress-track{width:100%;height:22px;border-radius:999px;background:var(--bg);border:1px solid var(--border);overflow:hidden;position:relative}
+.progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#38bdf8,#7dd3fc);transition:width .4s ease;position:relative;min-width:0}
+.progress-fill::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 60%,rgba(255,255,255,.15));border-radius:999px}
+.progress-text{display:flex;justify-content:space-between;font-size:.7rem;color:var(--text-muted);margin-top:.4rem;font-weight:500}
+.alarms{grid-column:1/-1}
+.alarm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem}
+.alarm-card{padding:1.25rem;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);text-align:center;transition:all .35s;position:relative;overflow:hidden}
+.alarm-card .alarm-icon{width:48px;height:48px;margin:0 auto .75rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--bg);border:1px solid var(--border);transition:all .35s}
+.alarm-card .alarm-icon svg{width:24px;height:24px;color:var(--text-muted);transition:color .3s}
+.alarm-card .alarm-label{font-size:.8rem;font-weight:600;color:var(--text-muted);transition:color .3s}
+.alarm-card .alarm-status{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:.4rem;color:var(--text-muted);opacity:.5;transition:all .3s}
+.alarm-card.active{border-color:var(--red);background:var(--red-glow);box-shadow:0 0 30px var(--red-glow);animation:alarm-flash 1s ease-in-out infinite}
+.alarm-card.active .alarm-icon{background:var(--red);border-color:var(--red)}
+.alarm-card.active .alarm-icon svg{color:#fff}
+.alarm-card.active .alarm-label{color:#fff}
+.alarm-card.active .alarm-status{color:var(--red);opacity:1}
+@keyframes alarm-flash{0%,100%{opacity:1}50%{opacity:.75}}
+footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted);opacity:.5;letter-spacing:.03em}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:.8rem 1.2rem;border-radius:10px;font-size:.8rem;font-weight:600;color:#fff;z-index:999;transform:translateY(120%);opacity:0;transition:all .35s ease;pointer-events:none}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.success{background:linear-gradient(135deg,#16a34a,#22c55e);box-shadow:0 4px 20px var(--green-glow)}
+.toast.error{background:linear-gradient(135deg,#dc2626,#ef4444);box-shadow:0 4px 20px var(--red-glow)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 36 36" fill="none"><rect x="2" y="10" width="32" height="16" rx="4" stroke="#38bdf8" stroke-width="2"/><rect x="6" y="14" width="16" height="8" rx="2" fill="#38bdf8" fill-opacity=".2" stroke="#38bdf8" stroke-width="1.5"/><rect x="26" y="15" width="8" height="6" rx="1" fill="#38bdf8" fill-opacity=".1" stroke="#38bdf8" stroke-width="1.5"/><line x1="14" y1="14" x2="14" y2="22" stroke="#38bdf8" stroke-width="1" opacity=".4"/><line x1="10" y1="14" x2="10" y2="22" stroke="#38bdf8" stroke-width="1" opacity=".4"/></svg>
+    <h1><span>Syringe</span>Pump Controller</h1>
+  </div>
+  <div class="status-chip" id="statusChip"><span class="dot"></span><span id="statusText">Idle</span></div>
+</header>
+<main>
+  <div class="card control-panel" id="controlPanel">
+    <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1v14M1 8h14"/></svg>Control Panel</div>
+    <div class="input-group"><label for="targetVol">Target Volume</label><input type="number" id="targetVol" min="0" step="0.1" placeholder="0.0"><div class="unit">mL (millilitres)</div></div>
+    <div class="input-group"><label for="flowRate">Flow Rate</label><input type="number" id="flowRate" min="0" step="0.1" placeholder="0.0"><div class="unit">mL/min (millilitres per minute)</div></div>
+    <div class="btn-row">
+      <button class="btn btn-start" id="btnStart" onclick="startInfusion()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Start Infusion</button>
+      <button class="btn btn-stop" id="btnStop" onclick="emergencyStop()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>Emergency Stop</button>
+    </div>
+  </div>
+  <div class="card monitor" id="monitorPanel">
+    <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1 12 4 5 7 9 10 3 13 8 15 6"/></svg>Real-Time Monitoring</div>
+    <div class="big-value" id="deliveredVal">0.00</div>
+    <div class="big-label">Volume Delivered (mL)</div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-text"><span id="progressPct">0 %</span><span id="progressTarget">Target: — mL</span></div>
+  </div>
+  <div class="card alarms" id="alarmPanel">
+    <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1L1 13h14L8 1zM8 6v4M8 11.5v.5"/></svg>Alarm Dashboard</div>
+    <div class="alarm-grid">
+      <div class="alarm-card" id="alarmOcclusion"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg></div><div class="alarm-label">Occlusion (Blockage)</div><div class="alarm-status" id="occlusionStatus">Normal</div></div>
+      <div class="alarm-card" id="alarmEmpty"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v6M12 18v4M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M2 12h6M18 12h4M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24"/></svg></div><div class="alarm-label">Syringe Empty</div><div class="alarm-status" id="emptyStatus">Normal</div></div>
+      <div class="alarm-card" id="alarmTremor"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2 12 5 8 8 14 11 6 14 16 17 10 20 13 22 12"/></svg></div><div class="alarm-label">Patient Tremor Detected</div><div class="alarm-status" id="tremorStatus">Normal</div></div>
+    </div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<footer>DIY Syringe Pump Controller &mdash; ESP32 Dashboard &copy; 2026</footer>
+<script>
+let pollingInterval=null,targetVolume=0;
+const elDelivered=document.getElementById('deliveredVal'),elFill=document.getElementById('progressFill'),elPct=document.getElementById('progressPct'),elTarget=document.getElementById('progressTarget'),elChip=document.getElementById('statusChip'),elChipText=document.getElementById('statusText'),elToast=document.getElementById('toast');
+const alarms={occlusion:{card:document.getElementById('alarmOcclusion'),status:document.getElementById('occlusionStatus')},empty:{card:document.getElementById('alarmEmpty'),status:document.getElementById('emptyStatus')},tremor:{card:document.getElementById('alarmTremor'),status:document.getElementById('tremorStatus')}};
+function showToast(m,t){elToast.textContent=m;elToast.className='toast '+t+' show';setTimeout(()=>elToast.classList.remove('show'),3000)}
+async function startInfusion(){const v=parseFloat(document.getElementById('targetVol').value),r=parseFloat(document.getElementById('flowRate').value);if(!v||v<=0||!r||r<=0){showToast('Please enter valid volume and flow rate.','error');return}targetVolume=v;elTarget.textContent='Target: '+v.toFixed(1)+' mL';try{const res=await fetch('/set_parameters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_vol:v,flow_rate:r})});if(!res.ok)throw new Error();showToast('Infusion started successfully.','success');setRunningState(true);startPolling()}catch(e){showToast('Failed to connect to pump.','error')}}
+async function emergencyStop(){try{await fetch('/emergency_stop',{method:'POST'})}catch(_){}stopPolling();setRunningState(false);showToast('EMERGENCY STOP activated!','error')}
+function startPolling(){stopPolling();pollingInterval=setInterval(fetchStatus,500)}
+function stopPolling(){if(pollingInterval){clearInterval(pollingInterval);pollingInterval=null}}
+async function fetchStatus(){try{const res=await fetch('/status');if(!res.ok)throw new Error();const d=await res.json();updateUI(d)}catch(_){}}
+function updateUI(d){const vol=d.delivered_vol??0;elDelivered.textContent=vol.toFixed(2);const pct=targetVolume>0?Math.min((vol/targetVolume)*100,100):0;elFill.style.width=pct.toFixed(1)+'%';elPct.textContent=pct.toFixed(1)+' %';setRunningState(!!d.running);if(!d.running&&pollingInterval)stopPolling();setAlarm('occlusion',!!d.occlusion);setAlarm('empty',!!d.empty);setAlarm('tremor',!!d.tremor)}
+function setAlarm(k,a){const al=alarms[k];if(a){al.card.classList.add('active');al.status.textContent='\u26A0 WARNING'}else{al.card.classList.remove('active');al.status.textContent='Normal'}}
+function setRunningState(r){if(r){elChip.classList.add('running');elChipText.textContent='Running';document.getElementById('btnStart').disabled=true}else{elChip.classList.remove('running');elChipText.textContent='Idle';document.getElementById('btnStart').disabled=false}}
+</script>
+</body>
+</html>
+)rawliteral";
+
+#endif // WEBPAGE_H
