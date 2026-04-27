@@ -102,12 +102,14 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
     <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1v14M1 8h14"/></svg>Control Panel</div>
     <div class="input-group"><label for="targetVol">Target Volume</label><input type="number" id="targetVol" min="0" step="0.1" placeholder="0.0"><div class="unit">mL (millilitres)</div></div>
     <div class="input-group"><label for="flowRate">Flow Rate</label><input type="number" id="flowRate" min="0" step="0.1" placeholder="0.0"><div class="unit">mL/min (millilitres per minute)</div></div>
+    <div class="input-group"><label for="timeMins">Time</label><input type="number" id="timeMins" min="0" step="0.1" placeholder="0.0"><div class="unit">Minutes</div></div>
     <div class="btn-row">
       <button class="btn btn-start" id="btnStart" onclick="startInfusion()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Start Infusion</button>
       <button class="btn btn-stop" id="btnStop" onclick="emergencyStop()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>Emergency Stop</button>
     </div>
     <div class="btn-row">
       <button class="btn btn-reverse" id="btnReverse" onclick="reverseDirection()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Reverse Direction<span class="dir-badge" id="dirBadge">⬇ PUSH</span></button>
+      <button class="btn" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);" onclick="resetVolume()">Reset Volume</button>
     </div>
   </div>
   <div class="card monitor" id="monitorPanel">
@@ -129,18 +131,59 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
 <div class="toast" id="toast"></div>
 <footer>DIY Syringe Pump Controller &mdash; ESP32 Dashboard &copy; 2026</footer>
 <script>
-let pollingInterval=null,targetVolume=0;
+let pollingInterval=null,targetVolume=0,firstError=null;
 const elDelivered=document.getElementById('deliveredVal'),elFill=document.getElementById('progressFill'),elPct=document.getElementById('progressPct'),elTarget=document.getElementById('progressTarget'),elChip=document.getElementById('statusChip'),elChipText=document.getElementById('statusText'),elToast=document.getElementById('toast'),elDirBadge=document.getElementById('dirBadge');
+const elVol=document.getElementById('targetVol'),elRate=document.getElementById('flowRate'),elTime=document.getElementById('timeMins');
+const MAX_RATE=18.3,MIN_RATE=0.04;
 const alarms={occlusion:{card:document.getElementById('alarmOcclusion'),status:document.getElementById('occlusionStatus')},empty:{card:document.getElementById('alarmEmpty'),status:document.getElementById('emptyStatus')},tremor:{card:document.getElementById('alarmTremor'),status:document.getElementById('tremorStatus')}};
 function showToast(m,t){elToast.textContent=m;elToast.className='toast '+t+' show';setTimeout(()=>elToast.classList.remove('show'),3000)}
-async function startInfusion(){const v=parseFloat(document.getElementById('targetVol').value),r=parseFloat(document.getElementById('flowRate').value);if(!v||v<=0||!r||r<=0){showToast('Please enter valid volume and flow rate.','error');return}targetVolume=v;elTarget.textContent='Target: '+v.toFixed(1)+' mL';try{const res=await fetch('/set_parameters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_vol:v,flow_rate:r})});if(!res.ok)throw new Error();showToast('Infusion started successfully.','success');setRunningState(true);startPolling()}catch(e){showToast('Failed to connect to pump.','error')}}
+
+function recalculateFields(source){
+  let v=parseFloat(elVol.value),r=parseFloat(elRate.value),t=parseFloat(elTime.value);
+  if(source==='vol'){
+    if(v>0&&r>0)elTime.value=(v/r).toFixed(2);
+    else if(v>0&&t>0)elRate.value=(v/t).toFixed(2);
+  }else if(source==='rate'){
+    if(r>0&&v>0)elTime.value=(v/r).toFixed(2);
+    else if(r>0&&t>0)elVol.value=(r*t).toFixed(2);
+  }else if(source==='time'){
+    if(t>0&&v>0)elRate.value=(v/t).toFixed(2);
+    else if(t>0&&r>0)elVol.value=(r*t).toFixed(2);
+  }
+  validateLimits();
+}
+
+function validateLimits(){
+  let r=parseFloat(elRate.value);
+  if(!isNaN(r)){
+    if(r>MAX_RATE){showToast(`Max speed is ${MAX_RATE} mL/min`,'error');elRate.value=MAX_RATE;let v=parseFloat(elVol.value);if(!isNaN(v)&&v>0)elTime.value=(v/MAX_RATE).toFixed(2);}
+    else if(r>0&&r<MIN_RATE){showToast(`Min speed is ${MIN_RATE} mL/min`,'error');elRate.value=MIN_RATE;let v=parseFloat(elVol.value);if(!isNaN(v)&&v>0)elTime.value=(v/MIN_RATE).toFixed(2);}
+  }
+}
+
+elVol.addEventListener('change',()=>recalculateFields('vol'));
+elRate.addEventListener('change',()=>recalculateFields('rate'));
+elTime.addEventListener('change',()=>recalculateFields('time'));
+
+async function startInfusion(){
+  validateLimits();
+  const v=parseFloat(elVol.value),r=parseFloat(elRate.value);
+  if(!v||v<=0||!r||r<=0){showToast('Please enter valid volume and flow rate.','error');return}
+  targetVolume=v;firstError=null;elTarget.textContent='Target: '+v.toFixed(1)+' mL';
+  try{
+    const res=await fetch('/set_parameters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_vol:v,flow_rate:r})});
+    if(!res.ok)throw new Error();
+    showToast('Infusion started successfully.','success');setRunningState(true);startPolling();
+  }catch(e){showToast('Failed to connect to pump.','error')}
+}
 async function emergencyStop(){try{await fetch('/emergency_stop',{method:'POST'})}catch(_){}stopPolling();setRunningState(false);showToast('EMERGENCY STOP activated!','error')}
+async function resetVolume(){try{const res=await fetch('/reset_volume',{method:'POST'});if(res.ok){showToast('Volume reset to 0 mL','success');fetchStatus()}}catch(e){}}
 async function reverseDirection(){try{const res=await fetch('/reverse_direction',{method:'POST'});if(!res.ok)throw new Error();const d=await res.json();const dir=d.direction||'unknown';updateDirBadge(dir.includes('PUSH')||dir.includes('push')?'push':'pull');showToast('Direction: '+dir,'success')}catch(e){showToast('Failed to reverse direction.','error')}}
 function updateDirBadge(dir){if(dir==='push'){elDirBadge.textContent='\u2B07 PUSH';elDirBadge.style.color='var(--yellow)'}else{elDirBadge.textContent='\u2B06 PULL';elDirBadge.style.color='var(--accent)'}}
 function startPolling(){stopPolling();pollingInterval=setInterval(fetchStatus,500)}
 function stopPolling(){if(pollingInterval){clearInterval(pollingInterval);pollingInterval=null}}
 async function fetchStatus(){try{const res=await fetch('/status');if(!res.ok)throw new Error();const d=await res.json();updateUI(d)}catch(_){}}
-function updateUI(d){const vol=d.delivered_vol??0;elDelivered.textContent=vol.toFixed(2);const pct=targetVolume>0?Math.min((vol/targetVolume)*100,100):0;elFill.style.width=pct.toFixed(1)+'%';elPct.textContent=pct.toFixed(1)+' %';setRunningState(!!d.running);if(!d.running&&pollingInterval)stopPolling();setAlarm('occlusion',!!d.occlusion);setAlarm('empty',!!d.empty);setAlarm('tremor',!!d.tremor);if(d.direction)updateDirBadge(d.direction)}
+function updateUI(d){const vol=d.delivered_vol??0;elDelivered.textContent=vol.toFixed(2);const pct=targetVolume>0?Math.min((vol/targetVolume)*100,100):0;elFill.style.width=pct.toFixed(1)+'%';elPct.textContent=pct.toFixed(1)+' %';setRunningState(!!d.running);if(!d.running&&pollingInterval)stopPolling();if(!firstError){if(d.empty)firstError='empty';else if(d.occlusion)firstError='occlusion';else if(d.tremor)firstError='tremor';}setAlarm('occlusion',firstError==='occlusion');setAlarm('empty',firstError==='empty');setAlarm('tremor',firstError==='tremor');if(d.direction)updateDirBadge(d.direction)}
 function setAlarm(k,a){const al=alarms[k];if(a){al.card.classList.add('active');al.status.textContent='\u26A0 WARNING'}else{al.card.classList.remove('active');al.status.textContent='Normal'}}
 function setRunningState(r){if(r){elChip.classList.add('running');elChipText.textContent='Running';document.getElementById('btnStart').disabled=true}else{elChip.classList.remove('running');elChipText.textContent='Idle';document.getElementById('btnStart').disabled=false}}
 </script>
