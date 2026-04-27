@@ -131,7 +131,22 @@
  *    to see the actual ADC readings from your sensor.
  *    *** CALIBRATE with your hardware. ***
  */
-#define FSR_EMPTY_THRESHOLD 500
+#define FSR_EMPTY_THRESHOLD 3000
+
+/*
+ *  FSR_OCCLUSION_THRESHOLD:
+ *    Raw ADC value (0–4095) above which the FSR indicates
+ *    that the line is partially or fully occluded (blocked).
+ *    Occlusion causes back-pressure on the syringe plunger,
+ *    which is detected by the FSR at a LOWER force level than
+ *    the "syringe empty" condition.
+ *
+ *    This value MUST be lower than FSR_EMPTY_THRESHOLD.
+ *    A reading between OCCLUSION and EMPTY means blockage;
+ *    a reading above EMPTY means the syringe is empty.
+ *    *** CALIBRATE with your hardware. ***
+ */
+#define FSR_OCCLUSION_THRESHOLD 1500
 
 // ─────────────────────────────────────────────
 //  YF-S401 FLOW RATE SENSOR CONSTANTS
@@ -242,7 +257,7 @@ void   IRAM_ATTR flowPulseISR();
 void setup() {
   // ── Serial for debugging ──
   Serial.begin(115200);
-  delay(200);
+  delay(100);
   Serial.println("\n══════════════════════════════════════");
   Serial.println("  Syringe Pump Controller — Booting");
   Serial.println("══════════════════════════════════════");
@@ -486,24 +501,44 @@ void readSensors() {
     haltMotor("Target volume reached");
   }
 
-  // ── 3. FSR pressure sensor → syringe empty detection ──
+  // ── 3. FSR pressure sensor → syringe empty & occlusion detection ──
   //    The FSR is positioned so the plunger presses it when the
   //    syringe is empty. When force is detected → emergency stop.
+  //    Two thresholds:
+  //      OCCLUSION (lower)  — back-pressure from blocked line
+  //      EMPTY     (higher) — plunger bottomed out, syringe empty
   fsrRawValue = readFSR();
   fsrPressure = (float)fsrRawValue / 4095.0 * 100.0; // 0–100 arbitrary units
 
-  // Debug: print FSR value periodically so user can calibrate threshold
+  // Debug: print FSR value periodically so user can calibrate thresholds
   static unsigned long lastFsrDebug = 0;
   if (millis() - lastFsrDebug >= 1000) {
     lastFsrDebug = millis();
-    Serial.printf("[FSR] Raw: %d / 4095  (threshold: %d)\n", fsrRawValue, FSR_EMPTY_THRESHOLD);
+    Serial.printf("[FSR] Raw: %d / 4095  (occlusion thresh: %d, empty thresh: %d)\n",
+                  fsrRawValue, FSR_OCCLUSION_THRESHOLD, FSR_EMPTY_THRESHOLD);
   }
 
+  // Check EMPTY first (higher threshold takes priority)
   if (fsrRawValue >= FSR_EMPTY_THRESHOLD) {
     if (!alarmEmpty) {
       alarmEmpty = true;
       haltMotor("SYRINGE EMPTY detected (FSR pressure)");
-      Serial.printf("[FSR] TRIGGERED! Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
+      Serial.printf("[FSR] EMPTY TRIGGERED! Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
+    }
+  }
+  // Then check OCCLUSION (lower threshold)
+  else if (fsrRawValue >= FSR_OCCLUSION_THRESHOLD) {
+    if (!alarmOcclusion) {
+      alarmOcclusion = true;
+      haltMotor("OCCLUSION detected (FSR back-pressure)");
+      Serial.printf("[FSR] OCCLUSION TRIGGERED! Raw: %d, Pressure: %.1f%%\n", fsrRawValue, fsrPressure);
+    }
+  } else {
+    // If pressure drops below occlusion threshold, clear the occlusion alarm
+    // (empty alarm is NOT auto-cleared — requires user intervention)
+    if (alarmOcclusion) {
+      alarmOcclusion = false;
+      Serial.println("[FSR] Occlusion cleared — pressure returned to normal.");
     }
   }
 
@@ -628,10 +663,9 @@ void computeFlowRate() {
   float frequency = (float)pulses; // We calculate every 1 sec, so Hz ≈ count
   measuredFlowRate_mLmin = (frequency / FLOW_CALIBRATION_FACTOR) * 1000.0;
 
-  if (measuredFlowRate_mLmin > 0.01) {
-    Serial.printf("[FlowSensor] %.2f mL/min (%lu pulses)\n",
-                  measuredFlowRate_mLmin, pulses);
-  }
+  // Always print raw pulse data and computed flow rate for debugging
+  Serial.printf("[FlowSensor] Raw pulses: %lu | Freq: %.2f Hz | Flow rate: %.2f mL/min\n",
+                pulses, frequency, measuredFlowRate_mLmin);
 }
 
 // ═════════════════════════════════════════════
