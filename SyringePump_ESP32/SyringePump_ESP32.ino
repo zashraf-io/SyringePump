@@ -8,15 +8,6 @@
 #include <WebHandlerImpl.h>
 #include <WebResponseImpl.h>
 
-#include <AsyncEventSource.h>
-#include <AsyncJson.h>
-#include <AsyncWebSocket.h>
-#include <AsyncWebSynchronization.h>
-#include <ESPAsyncWebServer.h>
-#include <StringArray.h>
-#include <WebAuthentication.h>
-#include <WebHandlerImpl.h>
-#include <WebResponseImpl.h>
 
 /*
  * ═══════════════════════════════════════════════════════════════════
@@ -79,6 +70,9 @@
 #define POT_PIN        34                  // Linear potentiometer (volume) — ADC1
 #define FSR_PIN        35                  // FSR pressure sensor — ADC1
 #define FLOW_PIN       4                   // YF-S401 flow rate sensor (digital pulse)
+
+// Alerts
+#define BUZZER_PIN     23                  // Passive buzzer on GPIO 23
 
 // Switches
 #define EMPTY_PIN      33                  // Limit switch – syringe empty (NC, active LOW)
@@ -195,6 +189,26 @@ int   motorDirection   = -1;
 
 bool  mpuAvailable     = false;           // Did MPU6050 init succeed?
 
+// Buzzer and user alert timer state
+enum TuneType { TUNE_NONE, TUNE_ALERT, TUNE_TIMER };
+TuneType activeTune = TUNE_NONE;
+uint8_t tuneIndex = 0;
+unsigned long tuneStepStarted_ms = 0;
+unsigned long lastCriticalAlertTune_ms = 0;
+bool lastCriticalAlarmState = false;
+
+bool alertTimerActive = false;
+bool alertTimerTriggered = false;
+unsigned long alertTimerDue_ms = 0;
+unsigned long alertTimerDuration_ms = 0;
+
+bool scheduledStartActive = false;
+bool scheduledStartTriggered = false;
+unsigned long scheduledStartDue_ms = 0;
+unsigned long scheduledStartDuration_ms = 0;
+float scheduledTargetVolume_mL = 0.0f;
+float scheduledFlowRate_mLmin = 0.0f;
+
 // ── FSR pressure reading ──
 int   fsrRawValue      = 0;               // Latest FSR ADC reading (0–4095)
 float fsrPressure      = 0.0;             // Mapped pressure (arbitrary units)
@@ -235,6 +249,11 @@ void   computeFlowRate();
 float  readMPU6050Magnitude();
 void   haltMotor(const char* reason);
 void   startMotor();
+void   startTune(TuneType tune);
+void   updateBuzzer();
+void   stopBuzzerTone();
+void   updateAlertTimer();
+void   updateScheduledStart();
 
 // ═════════════════════════════════════════════
 //  SETUP
@@ -250,6 +269,8 @@ void setup() {
   // ── Pin modes ──
   pinMode(EMPTY_PIN,     INPUT_PULLUP);    // Limit switch, NC to GND
   pinMode(pushButtonPin, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
+  stopBuzzerTone();
   // POT_PIN (34) and FSR_PIN (35) are ADC — no pinMode needed for analogRead
 
   // ── Stepper defaults (28BYJ-48 is slow: ~500 half-steps/sec max) ──
@@ -296,6 +317,11 @@ void loop() {
     computeFlowRate();
     lastFlowCalc_ms = now;
   }
+
+  // â”€â”€ 4. Non-blocking buzzer and alert timer â”€â”€
+  updateScheduledStart();
+  updateAlertTimer();
+  updateBuzzer();
 }
 
 // ═════════════════════════════════════════════
@@ -383,7 +409,122 @@ void setupWebServer() {
   // ── POST /emergency_stop ──
   server.on("/emergency_stop", HTTP_POST, [](AsyncWebServerRequest *request) {
     haltMotor("EMERGENCY STOP via web");
+    startTune(TUNE_ALERT);
     request->send(200, "application/json", "{\"status\":\"stopped\"}");
+  });
+
+  // â”€â”€ POST /set_alert_timer â”€â”€
+  // Expects JSON: { "minutes": 10 }
+  server.on("/set_alert_timer", HTTP_POST,
+    [](AsyncWebServerRequest *request) {},
+    NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      if (index == 0) {
+        request->_tempObject = malloc(total + 1);
+      }
+      memcpy((uint8_t*)request->_tempObject + index, data, len);
+
+      if (index + len == total) {
+        ((char*)request->_tempObject)[total] = '\0';
+
+        StaticJsonDocument<128> doc;
+        DeserializationError err = deserializeJson(doc, (char*)request->_tempObject);
+        free(request->_tempObject);
+        request->_tempObject = NULL;
+
+        if (err) {
+          request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+          return;
+        }
+
+        float minutes = doc["minutes"] | 0.0f;
+        if (minutes <= 0.0f || minutes > 1440.0f) {
+          request->send(400, "application/json", "{\"error\":\"Timer minutes must be between 0 and 1440\"}");
+          return;
+        }
+
+        alertTimerDuration_ms = (unsigned long)(minutes * 60000.0f);
+        if (alertTimerDuration_ms < 1000UL) alertTimerDuration_ms = 1000UL;
+        alertTimerDue_ms = millis() + alertTimerDuration_ms;
+        alertTimerActive = true;
+        alertTimerTriggered = false;
+
+        Serial.printf("[Timer] Alert timer set for %.2f minutes\n", minutes);
+        request->send(200, "application/json", "{\"status\":\"timer_set\"}");
+      }
+    }
+  );
+
+  // â”€â”€ POST /cancel_alert_timer â”€â”€
+  server.on("/cancel_alert_timer", HTTP_POST, [](AsyncWebServerRequest *request) {
+    alertTimerActive = false;
+    alertTimerTriggered = false;
+    request->send(200, "application/json", "{\"status\":\"timer_cancelled\"}");
+  });
+
+  // â”€â”€ POST /schedule_start â”€â”€
+  // Expects JSON: { "minutes": 10, "target_vol": 5.0, "flow_rate": 0.5 }
+  server.on("/schedule_start", HTTP_POST,
+    [](AsyncWebServerRequest *request) {},
+    NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+      if (index == 0) {
+        request->_tempObject = malloc(total + 1);
+      }
+      memcpy((uint8_t*)request->_tempObject + index, data, len);
+
+      if (index + len == total) {
+        ((char*)request->_tempObject)[total] = '\0';
+
+        StaticJsonDocument<192> doc;
+        DeserializationError err = deserializeJson(doc, (char*)request->_tempObject);
+        free(request->_tempObject);
+        request->_tempObject = NULL;
+
+        if (err) {
+          request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+          return;
+        }
+
+        float minutes = doc["minutes"] | 0.0f;
+        float targetVol = doc["target_vol"] | 0.0f;
+        float flowRate = doc["flow_rate"] | 0.0f;
+
+        if (motorRunning) {
+          request->send(409, "application/json", "{\"error\":\"Motor already running\"}");
+          return;
+        }
+
+        if (minutes <= 0.0f || minutes > 1440.0f) {
+          request->send(400, "application/json", "{\"error\":\"Timer minutes must be between 0 and 1440\"}");
+          return;
+        }
+
+        if (targetVol <= 0.0f || flowRate <= 0.0f) {
+          request->send(400, "application/json", "{\"error\":\"Invalid target volume or flow rate\"}");
+          return;
+        }
+
+        scheduledStartDuration_ms = (unsigned long)(minutes * 60000.0f);
+        if (scheduledStartDuration_ms < 1000UL) scheduledStartDuration_ms = 1000UL;
+        scheduledStartDue_ms = millis() + scheduledStartDuration_ms;
+        scheduledStartActive = true;
+        scheduledStartTriggered = false;
+        scheduledTargetVolume_mL = targetVol;
+        scheduledFlowRate_mLmin = flowRate;
+
+        Serial.printf("[Schedule] Start in %.2f minutes (target=%.2f mL, rate=%.2f mL/min)\n",
+                      minutes, targetVol, flowRate);
+        request->send(200, "application/json", "{\"status\":\"scheduled\"}");
+      }
+    }
+  );
+
+  // â”€â”€ POST /cancel_scheduled_start â”€â”€
+  server.on("/cancel_scheduled_start", HTTP_POST, [](AsyncWebServerRequest *request) {
+    scheduledStartActive = false;
+    scheduledStartTriggered = false;
+    request->send(200, "application/json", "{\"status\":\"schedule_cancelled\"}");
   });
 
   // ── POST /reverse_direction ──
@@ -410,7 +551,7 @@ void setupWebServer() {
   // ── GET /status ──
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
     // Build JSON response
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["delivered_vol"]     = deliveredVol_mL;
     doc["occlusion"]         = alarmOcclusion;
     doc["empty"]             = alarmEmpty;
@@ -419,6 +560,23 @@ void setupWebServer() {
     doc["fsr_raw"]           = fsrRawValue;
     doc["fsr_pressure"]      = fsrPressure;
     doc["measured_flow_rate"] = measuredFlowRate_mLmin;
+    doc["alert_timer_active"] = alertTimerActive;
+    doc["alert_timer_triggered"] = alertTimerTriggered;
+    long timerRemaining_ms = 0;
+    if (alertTimerActive) {
+      timerRemaining_ms = (long)(alertTimerDue_ms - millis());
+      if (timerRemaining_ms < 0) timerRemaining_ms = 0;
+    }
+    doc["alert_timer_remaining_ms"] = timerRemaining_ms;
+
+    doc["scheduled_start_active"] = scheduledStartActive;
+    doc["scheduled_start_triggered"] = scheduledStartTriggered;
+    long scheduledRemaining_ms = 0;
+    if (scheduledStartActive) {
+      scheduledRemaining_ms = (long)(scheduledStartDue_ms - millis());
+      if (scheduledRemaining_ms < 0) scheduledRemaining_ms = 0;
+    }
+    doc["scheduled_start_remaining_ms"] = scheduledRemaining_ms;
 
     String json;
     serializeJson(doc, json);
@@ -496,6 +654,7 @@ void readSensors() {
   // ── 2. Check if target volume reached ──
   if (motorRunning && deliveredVol_mL >= targetVolume_mL) {
     haltMotor("Target volume reached");
+    startTune(TUNE_ALERT);
   }
 
   // ── 3. Push button (empty indicator) ──
@@ -612,6 +771,91 @@ void computeFlowRate() {
 }
 
 // ═════════════════════════════════════════════
+//  BUZZER ALERTS AND USER TIMER
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+void startTune(TuneType tune) {
+  activeTune = tune;
+  tuneIndex = 0;
+  tuneStepStarted_ms = 0;
+}
+
+void stopBuzzerTone() {
+  noTone(BUZZER_PIN);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void updateAlertTimer() {
+  unsigned long now = millis();
+  if (alertTimerActive && (long)(now - alertTimerDue_ms) >= 0) {
+    alertTimerActive = false;
+    alertTimerTriggered = true;
+    Serial.println("[Timer] Alert timer reached");
+    startTune(TUNE_TIMER);
+  }
+
+  bool criticalAlarmActive = alarmOcclusion || alarmEmpty;
+  if (criticalAlarmActive && (!lastCriticalAlarmState || now - lastCriticalAlertTune_ms >= 10000UL)) {
+    lastCriticalAlertTune_ms = now;
+    startTune(TUNE_ALERT);
+  }
+  lastCriticalAlarmState = criticalAlarmActive;
+}
+
+void updateScheduledStart() {
+  if (!scheduledStartActive) return;
+
+  unsigned long now = millis();
+  if ((long)(now - scheduledStartDue_ms) < 0) return;
+
+  scheduledStartActive = false;
+  scheduledStartTriggered = true;
+
+  targetVolume_mL = scheduledTargetVolume_mL;
+  flowRate_mLmin = scheduledFlowRate_mLmin;
+  deliveredVol_mL = 0.0;
+  lastStepperPosition = stepper.currentPosition();
+  alarmOcclusion = false;
+  alarmEmpty = false;
+
+  Serial.printf("[Schedule] Triggered. Starting infusion: %.2f mL at %.2f mL/min\n",
+                targetVolume_mL, flowRate_mLmin);
+  startTune(TUNE_TIMER);
+  startMotor();
+}
+
+void updateBuzzer() {
+  static const uint16_t alertNotes[] = { 988, 0, 988, 0, 784, 0, 988, 0 };
+  static const uint16_t alertDurations[] = { 140, 70, 140, 70, 220, 90, 300, 0 };
+  static const uint16_t timerNotes[] = { 659, 784, 988, 1175, 988, 1175, 1319, 0 };
+  static const uint16_t timerDurations[] = { 120, 120, 120, 180, 120, 120, 260, 0 };
+
+  if (activeTune == TUNE_NONE) return;
+
+  const uint16_t* notes = (activeTune == TUNE_ALERT) ? alertNotes : timerNotes;
+  const uint16_t* durations = (activeTune == TUNE_ALERT) ? alertDurations : timerDurations;
+  const uint8_t tuneLength = 8;
+  unsigned long now = millis();
+
+  if (tuneStepStarted_ms == 0 || now - tuneStepStarted_ms >= durations[tuneIndex - 1]) {
+    if (tuneIndex >= tuneLength || durations[tuneIndex] == 0) {
+      stopBuzzerTone();
+      activeTune = TUNE_NONE;
+      tuneIndex = 0;
+      return;
+    }
+
+    if (notes[tuneIndex] == 0) {
+      stopBuzzerTone();
+    } else {
+      tone(BUZZER_PIN, notes[tuneIndex]);
+    }
+
+    tuneStepStarted_ms = now;
+    tuneIndex++;
+  }
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  MPU6050 ACCELEROMETER
 // ═════════════════════════════════════════════
 

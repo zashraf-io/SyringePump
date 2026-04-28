@@ -13,7 +13,7 @@
   --bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:#1e293b;
   --text:#e2e8f0;--text-muted:#94a3b8;--accent:#38bdf8;--accent-glow:rgba(56,189,248,.15);
   --green:#22c55e;--green-glow:rgba(34,197,94,.2);--red:#ef4444;--red-glow:rgba(239,68,68,.25);
-  --yellow:#facc15;--radius:12px;--font:'Inter',sans-serif;--mono:'JetBrains Mono',monospace;
+  --yellow:#facc15;--yellow-glow:rgba(250,204,21,.2);--radius:12px;--font:'Inter',sans-serif;--mono:'JetBrains Mono',monospace;
 }
 html{font-size:16px}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
@@ -35,6 +35,7 @@ header{
   transition:all .3s;
 }
 .status-chip.running{background:var(--green-glow);border-color:var(--green);color:var(--green)}
+.status-chip.scheduled{background:var(--yellow-glow);border-color:var(--yellow);color:var(--yellow)}
 .status-chip .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
 .status-chip.running .dot{animation:pulse-dot 1.2s ease-in-out infinite}
 @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
@@ -78,6 +79,8 @@ main{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-co
 .btn-start:disabled{opacity:.5;cursor:not-allowed;filter:none;box-shadow:none}
 .btn-stop{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;box-shadow:0 4px 20px var(--red-glow)}
 .btn-stop:hover{box-shadow:0 6px 30px rgba(239,68,68,.4);filter:brightness(1.1)}
+.schedule-status{display:flex;justify-content:space-between;gap:.5rem;margin-top:.75rem;font-size:.75rem;color:var(--text-muted);font-weight:600}
+.schedule-status strong{color:var(--yellow);font-weight:700}
 
 /* ─── Monitor ─── */
 .monitor{grid-column:2}
@@ -170,6 +173,11 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
       <input type="number" id="flowRate" min="0" step="0.1" placeholder="0.0" autocomplete="off">
       <div class="unit">mL/min (millilitres per minute)</div>
     </div>
+    <div class="input-group">
+      <label for="timeMins">Start Delay</label>
+      <input type="number" id="timeMins" min="0" step="0.1" placeholder="0.0" autocomplete="off">
+      <div class="unit">Minutes before auto-start</div>
+    </div>
     <div class="btn-row">
       <button class="btn btn-start" id="btnStart" onclick="startInfusion()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -179,6 +187,19 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
         Emergency Stop
       </button>
+    </div>
+    <div class="btn-row">
+      <button class="btn" style="background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff" onclick="scheduleStart()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8v5l3 3"/><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        Schedule Start
+      </button>
+      <button class="btn" style="background:var(--surface2);color:var(--text);border:1px solid var(--border)" onclick="cancelScheduledStart()">
+        Cancel Schedule
+      </button>
+    </div>
+    <div class="schedule-status">
+      <span id="scheduleStatusLabel">Schedule</span>
+      <strong id="scheduleCountdown">Not set</strong>
     </div>
   </div>
 
@@ -252,6 +273,9 @@ const elTarget = document.getElementById('progressTarget');
 const elChip = document.getElementById('statusChip');
 const elChipText = document.getElementById('statusText');
 const elToast = document.getElementById('toast');
+const elTime = document.getElementById('timeMins');
+const elScheduleLabel = document.getElementById('scheduleStatusLabel');
+const elScheduleCountdown = document.getElementById('scheduleCountdown');
 
 // Alarm elements
 const alarms = {
@@ -265,6 +289,24 @@ function showToast(msg, type) {
   elToast.textContent = msg;
   elToast.className = 'toast ' + type + ' show';
   setTimeout(() => elToast.classList.remove('show'), 3000);
+}
+
+function formatRemaining(ms) {
+  if (!ms || ms <= 0) return '0:00';
+  const totalSec = Math.ceil(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min + ':' + String(sec).padStart(2, '0');
+}
+
+function updateScheduleState(active, remainingMs) {
+  if (active) {
+    elScheduleLabel.textContent = 'Scheduled Start';
+    elScheduleCountdown.textContent = 'in ' + formatRemaining(remainingMs);
+  } else {
+    elScheduleLabel.textContent = 'Schedule';
+    elScheduleCountdown.textContent = 'Not set';
+  }
 }
 
 // ─── Start Infusion ───
@@ -303,6 +345,41 @@ async function emergencyStop() {
   showToast('EMERGENCY STOP activated!', 'error');
 }
 
+async function scheduleStart() {
+  const minutes = parseFloat(elTime.value);
+  const vol = parseFloat(document.getElementById('targetVol').value);
+  const rate = parseFloat(document.getElementById('flowRate').value);
+
+  if (!minutes || minutes <= 0 || !vol || vol <= 0 || !rate || rate <= 0) {
+    showToast('Enter time, volume, and flow rate before scheduling.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch('/schedule_start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes, target_vol: vol, flow_rate: rate })
+    });
+    if (!res.ok) throw new Error('Server error');
+    showToast('Auto-start scheduled.', 'success');
+    startPolling();
+  } catch (e) {
+    showToast('Failed to schedule start.', 'error');
+  }
+}
+
+async function cancelScheduledStart() {
+  try {
+    const res = await fetch('/cancel_scheduled_start', { method: 'POST' });
+    if (!res.ok) throw new Error('Server error');
+    updateScheduleState(false, 0);
+    showToast('Schedule cancelled.', 'success');
+  } catch (e) {
+    showToast('Failed to cancel schedule.', 'error');
+  }
+}
+
 // ─── Polling ───
 function startPolling() {
   stopPolling();
@@ -333,8 +410,12 @@ function updateUI(d) {
   elPct.textContent = pct.toFixed(1) + ' %';
 
   // Running state
-  setRunningState(!!d.running);
+  const scheduledActive = !!d.scheduled_start_active;
+  setRunningState(!!d.running, scheduledActive);
   if (!d.running && pollingInterval) stopPolling();
+
+  // Schedule status
+  updateScheduleState(scheduledActive, d.scheduled_start_remaining_ms ?? 0);
 
   // Alarms
   setAlarm('occlusion', !!d.occlusion);
@@ -353,13 +434,20 @@ function setAlarm(key, active) {
   }
 }
 
-function setRunningState(running) {
+function setRunningState(running, scheduled) {
   if (running) {
     elChip.classList.add('running');
+    elChip.classList.remove('scheduled');
     elChipText.textContent = 'Running';
     document.getElementById('btnStart').disabled = true;
+  } else if (scheduled) {
+    elChip.classList.remove('running');
+    elChip.classList.add('scheduled');
+    elChipText.textContent = 'Scheduled';
+    document.getElementById('btnStart').disabled = false;
   } else {
     elChip.classList.remove('running');
+    elChip.classList.remove('scheduled');
     elChipText.textContent = 'Idle';
     document.getElementById('btnStart').disabled = false;
   }
