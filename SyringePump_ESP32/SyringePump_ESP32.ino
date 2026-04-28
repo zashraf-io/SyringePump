@@ -32,7 +32,6 @@
  *    • FSR pressure sensor for occlusion detection (ADC)
  *    • YF-S401 flow rate sensor (interrupt-driven pulse counting)
  *    • Syringe-empty limit switch (active LOW)
- *    • MPU6050 accelerometer tremor detection (I2C)
  *    • JSON REST API: POST /set_parameters, GET /status,
  *      POST /emergency_stop
  *
@@ -50,7 +49,6 @@
  *    FSR Sensor  : GPIO 35  (ADC1, analog pressure sensing)
  *    Flow Sensor : GPIO 4   (YF-S401, digital pulse output)
  *    Empty SW    : GPIO 33  (active LOW, internal pull-up)
- *    MPU6050     : SDA=21, SCL=22 (default I2C)
  *
  *  Author : Auto-generated for Ziad's Medical Equipment project
  *  Date   : 2026-04-18
@@ -128,7 +126,7 @@
  *    to see the actual ADC readings from your sensor.
  *    *** CALIBRATE with your hardware. ***
  */
-#define FSR_ALARM_THRESHOLD 1500
+#define FSR_ALARM_THRESHOLD 500
 
 /*
  *  FSR_SHARP_JUMP_THRESHOLD:
@@ -137,6 +135,11 @@
  *    considered an occlusion (gradual increase).
  */
 #define FSR_SHARP_JUMP_THRESHOLD 300
+
+/*
+trying the push button to detect the occlusion
+*/
+const int pushButtonPin = 4;
 
 // ─────────────────────────────────────────────
 //  YF-S401 FLOW RATE SENSOR CONSTANTS
@@ -158,14 +161,6 @@
 #define MPU6050_ADDR        0x68           // Default I2C address
 #define MPU6050_PWR_MGMT_1  0x6B           // Power management register
 #define MPU6050_ACCEL_XOUT  0x3B           // First accel data register
-
-/*
- *  TREMOR_THRESHOLD_G:
- *    Acceleration magnitude (in g) above which we flag a tremor.
- *    Normal gravity ≈ 1.0 g, so a spike of 2.5+ g is significant.
- *    Tune this based on your mounting and patient scenario.
- */
-#define TREMOR_THRESHOLD_G  2.5
 
 // ─────────────────────────────────────────────
 //  WI-FI ACCESS POINT SETTINGS
@@ -190,7 +185,6 @@ AsyncWebServer server(80);
 volatile bool motorRunning    = false;     // Is the motor actively stepping?
 volatile bool alarmOcclusion  = false;     // Occlusion detected (via FSR)?
 volatile bool alarmEmpty      = false;     // Syringe empty detected?
-volatile bool alarmTremor     = false;     // Tremor spike detected?
 
 float targetVolume_mL  = 0.0;             // Desired infusion volume (mL)
 float flowRate_mLmin   = 0.0;             // Desired flow rate (mL/min)
@@ -255,6 +249,7 @@ void setup() {
 
   // ── Pin modes ──
   pinMode(EMPTY_PIN,     INPUT_PULLUP);    // Limit switch, NC to GND
+  pinMode(pushButtonPin, INPUT_PULLUP);
   // POT_PIN (34) and FSR_PIN (35) are ADC — no pinMode needed for analogRead
 
   // ── Stepper defaults (28BYJ-48 is slow: ~500 half-steps/sec max) ──
@@ -368,7 +363,6 @@ void setupWebServer() {
         // Clear any previous alarms before starting
         alarmOcclusion = false;
         alarmEmpty     = false;
-        alarmTremor    = false;
 
         // Calculate stepper speed and start motor
         startMotor();
@@ -420,7 +414,6 @@ void setupWebServer() {
     doc["delivered_vol"]     = deliveredVol_mL;
     doc["occlusion"]         = alarmOcclusion;
     doc["empty"]             = alarmEmpty;
-    doc["tremor"]            = alarmTremor;
     doc["running"]           = motorRunning;
     doc["direction"]         = (motorDirection < 0) ? "push" : "pull";
     doc["fsr_raw"]           = fsrRawValue;
@@ -505,7 +498,26 @@ void readSensors() {
     haltMotor("Target volume reached");
   }
 
-  // ── 3. FSR pressure sensor → syringe empty & occlusion detection ──
+  // ── 3. Push button (empty indicator) ──
+  static bool lastButtonState = HIGH;
+  bool buttonState = digitalRead(pushButtonPin);
+  bool buttonPressed = (lastButtonState == HIGH && buttonState == LOW);
+  lastButtonState = buttonState;
+
+  if (buttonPressed && !alarmEmpty) {
+    if (alarmOcclusion) {
+      alarmOcclusion = false;
+      alarmEmpty = true;
+      haltMotor("SYRINGE EMPTY confirmed (button)");
+      Serial.println("[Button] Occlusion switched to EMPTY");
+    } else {
+      alarmEmpty = true;
+      haltMotor("SYRINGE EMPTY detected (button)");
+      Serial.println("[Button] EMPTY TRIGGERED");
+    }
+  }
+
+  // ── 4. FSR pressure sensor → syringe empty & occlusion detection ──
   fsrRawValue = readFSR();
   fsrPressure = (float)fsrRawValue / 4095.0 * 100.0; // 0–100 arbitrary units
 
@@ -543,18 +555,6 @@ void readSensors() {
     if (alarmOcclusion) {
       alarmOcclusion = false;
       Serial.println("[FSR] Occlusion cleared — pressure returned to normal.");
-    }
-  }
-
-  // ── 5. Tremor detection via MPU6050 ──
-  if (mpuAvailable) {
-    float accelMag = readMPU6050Magnitude();
-    if (accelMag > TREMOR_THRESHOLD_G) {
-      if (!alarmTremor) {
-        alarmTremor = true;
-        haltMotor("TREMOR detected (accel spike)");
-        Serial.printf("[Tremor] Magnitude: %.2f g\n", accelMag);
-      }
     }
   }
 }

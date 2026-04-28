@@ -124,7 +124,6 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
     <div class="alarm-grid">
       <div class="alarm-card" id="alarmOcclusion"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="4" y1="4" x2="20" y2="20"/></svg></div><div class="alarm-label">Occlusion (Blockage)</div><div class="alarm-status" id="occlusionStatus">Normal</div></div>
       <div class="alarm-card" id="alarmEmpty"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v6M12 18v4M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M2 12h6M18 12h4M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24"/></svg></div><div class="alarm-label">Syringe Empty</div><div class="alarm-status" id="emptyStatus">Normal</div></div>
-      <div class="alarm-card" id="alarmTremor"><div class="alarm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2 12 5 8 8 14 11 6 14 16 17 10 20 13 22 12"/></svg></div><div class="alarm-label">Patient Tremor Detected</div><div class="alarm-status" id="tremorStatus">Normal</div></div>
     </div>
   </div>
 </main>
