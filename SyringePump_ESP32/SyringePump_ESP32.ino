@@ -109,10 +109,9 @@
 // ─────────────────────────────────────────────
 
 /*
- *  FSR_EMPTY_THRESHOLD:
+ *  FSR_ALARM_THRESHOLD:
  *    Raw ADC value (0–4095) above which the FSR indicates
- *    that the syringe plunger has bottomed out (syringe empty).
- *    The FSR is placed so the plunger presses it at end of travel.
+ *    an occlusion (pressure increase) while infusing.
  *    Higher pressure → higher ADC value (with voltage divider).
  *
  *    Start with a LOW value (e.g. 500) and raise it if you get
@@ -120,15 +119,7 @@
  *    to see the actual ADC readings from your sensor.
  *    *** CALIBRATE with your hardware. ***
  */
-#define FSR_ALARM_THRESHOLD 500
-
-/*
- *  FSR_SHARP_JUMP_THRESHOLD:
- *    How much the FSR value must increase within 500ms to be considered
- *    a "syringe empty" event (sharp jump). If the increase is less, it's
- *    considered an occlusion (gradual increase).
- */
-#define FSR_SHARP_JUMP_THRESHOLD 300
+#define FSR_ALARM_THRESHOLD 1000
 
 /*
 trying the push button to detect the occlusion
@@ -194,7 +185,6 @@ enum TuneType { TUNE_NONE, TUNE_ALERT, TUNE_TIMER };
 TuneType activeTune = TUNE_NONE;
 uint8_t tuneIndex = 0;
 unsigned long tuneStepStarted_ms = 0;
-unsigned long lastCriticalAlertTune_ms = 0;
 bool lastCriticalAlarmState = false;
 
 bool alertTimerActive = false;
@@ -212,11 +202,6 @@ float scheduledFlowRate_mLmin = 0.0f;
 // ── FSR pressure reading ──
 int   fsrRawValue      = 0;               // Latest FSR ADC reading (0–4095)
 float fsrPressure      = 0.0;             // Mapped pressure (arbitrary units)
-
-// ── FSR history for rate-of-change detection ──
-#define FSR_HISTORY_LEN 10
-int fsrHistory[FSR_HISTORY_LEN] = {0};
-int fsrHistoryIdx = 0;
 
 // ── Stepper position tracking ──
 long lastStepperPosition = 0;
@@ -463,7 +448,7 @@ void setupWebServer() {
   });
 
   // â”€â”€ POST /schedule_start â”€â”€
-  // Expects JSON: { "minutes": 10, "target_vol": 5.0, "flow_rate": 0.5 }
+  // Expects JSON: { "seconds": 30, "minutes": 0.5, "target_vol": 5.0, "flow_rate": 0.5 }
   server.on("/schedule_start", HTTP_POST,
     [](AsyncWebServerRequest *request) {},
     NULL,
@@ -486,17 +471,22 @@ void setupWebServer() {
           return;
         }
 
+        float seconds = doc["seconds"] | 0.0f;
         float minutes = doc["minutes"] | 0.0f;
         float targetVol = doc["target_vol"] | 0.0f;
         float flowRate = doc["flow_rate"] | 0.0f;
+
+        if (seconds <= 0.0f && minutes > 0.0f) {
+          seconds = minutes * 60.0f;
+        }
 
         if (motorRunning) {
           request->send(409, "application/json", "{\"error\":\"Motor already running\"}");
           return;
         }
 
-        if (minutes <= 0.0f || minutes > 1440.0f) {
-          request->send(400, "application/json", "{\"error\":\"Timer minutes must be between 0 and 1440\"}");
+        if (seconds <= 0.0f || seconds > 86400.0f) {
+          request->send(400, "application/json", "{\"error\":\"Timer seconds must be between 0 and 86400\"}");
           return;
         }
 
@@ -505,7 +495,7 @@ void setupWebServer() {
           return;
         }
 
-        scheduledStartDuration_ms = (unsigned long)(minutes * 60000.0f);
+        scheduledStartDuration_ms = (unsigned long)(seconds * 1000.0f);
         if (scheduledStartDuration_ms < 1000UL) scheduledStartDuration_ms = 1000UL;
         scheduledStartDue_ms = millis() + scheduledStartDuration_ms;
         scheduledStartActive = true;
@@ -513,8 +503,8 @@ void setupWebServer() {
         scheduledTargetVolume_mL = targetVol;
         scheduledFlowRate_mLmin = flowRate;
 
-        Serial.printf("[Schedule] Start in %.2f minutes (target=%.2f mL, rate=%.2f mL/min)\n",
-                      minutes, targetVol, flowRate);
+        Serial.printf("[Schedule] Start in %.2f seconds (target=%.2f mL, rate=%.2f mL/min)\n",
+                seconds, targetVol, flowRate);
         request->send(200, "application/json", "{\"status\":\"scheduled\"}");
       }
     }
@@ -680,41 +670,24 @@ void readSensors() {
   fsrRawValue = readFSR();
   fsrPressure = (float)fsrRawValue / 4095.0 * 100.0; // 0–100 arbitrary units
 
-  // Update FSR history for rate-of-change detection
-  fsrHistory[fsrHistoryIdx] = fsrRawValue;
-  int oldestFsr = fsrHistory[(fsrHistoryIdx + 1) % FSR_HISTORY_LEN];
-  fsrHistoryIdx = (fsrHistoryIdx + 1) % FSR_HISTORY_LEN;
-  int fsrDelta = fsrRawValue - oldestFsr;
-
   // Debug: print FSR value periodically
   static unsigned long lastFsrDebug = 0;
   if (millis() - lastFsrDebug >= 1000) {
     lastFsrDebug = millis();
-    Serial.printf("[FSR] Raw: %d | 500ms Delta: %d | (Alarm Thresh: %d, Sharp Jump: %d)\n",
-                  fsrRawValue, fsrDelta, FSR_ALARM_THRESHOLD, FSR_SHARP_JUMP_THRESHOLD);
+    Serial.printf("[FSR] Raw: %d | (Occlusion Thresh: %d)\n",
+                  fsrRawValue, FSR_ALARM_THRESHOLD);
   }
 
-  // Evaluate empty vs occlusion based on rate of change
+  // Occlusion detection (empty alarm only via button)
   if (fsrRawValue >= FSR_ALARM_THRESHOLD) {
-    if (fsrDelta >= FSR_SHARP_JUMP_THRESHOLD) {
-      if (!alarmEmpty) {
-        alarmEmpty = true;
-        haltMotor("SYRINGE EMPTY detected (Sharp FSR jump)");
-        Serial.printf("[FSR] EMPTY TRIGGERED! Raw: %d, Delta: %d\n", fsrRawValue, fsrDelta);
-      }
-    } else {
-      if (!alarmOcclusion && !alarmEmpty) {
-        alarmOcclusion = true;
-        haltMotor("OCCLUSION detected (Gradual FSR increase)");
-        Serial.printf("[FSR] OCCLUSION TRIGGERED! Raw: %d, Delta: %d\n", fsrRawValue, fsrDelta);
-      }
+    if (!alarmOcclusion && !alarmEmpty) {
+      alarmOcclusion = true;
+      haltMotor("OCCLUSION detected (FSR pressure)");
+      Serial.printf("[FSR] OCCLUSION TRIGGERED! Raw: %d\n", fsrRawValue);
     }
-  } else {
-    // If pressure drops below threshold, clear the occlusion alarm
-    if (alarmOcclusion) {
-      alarmOcclusion = false;
-      Serial.println("[FSR] Occlusion cleared — pressure returned to normal.");
-    }
+  } else if (alarmOcclusion) {
+    alarmOcclusion = false;
+    Serial.println("[FSR] Occlusion cleared — pressure returned to normal.");
   }
 }
 
@@ -772,7 +745,6 @@ void computeFlowRate() {
 
 // ═════════════════════════════════════════════
 //  BUZZER ALERTS AND USER TIMER
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 void startTune(TuneType tune) {
   activeTune = tune;
   tuneIndex = 0;
@@ -790,12 +762,10 @@ void updateAlertTimer() {
     alertTimerActive = false;
     alertTimerTriggered = true;
     Serial.println("[Timer] Alert timer reached");
-    startTune(TUNE_TIMER);
   }
 
   bool criticalAlarmActive = alarmOcclusion || alarmEmpty;
-  if (criticalAlarmActive && (!lastCriticalAlarmState || now - lastCriticalAlertTune_ms >= 10000UL)) {
-    lastCriticalAlertTune_ms = now;
+  if (criticalAlarmActive && !lastCriticalAlarmState) {
     startTune(TUNE_ALERT);
   }
   lastCriticalAlarmState = criticalAlarmActive;

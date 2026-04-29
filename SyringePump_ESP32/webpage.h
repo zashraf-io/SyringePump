@@ -50,6 +50,8 @@ main{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-co
 .input-group label{display:block;font-size:.8rem;font-weight:600;color:var(--text-muted);margin-bottom:.35rem}
 .input-group input{width:100%;padding:.7rem 1rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:var(--mono);font-size:1rem;font-weight:500;outline:none;transition:border-color .2s,box-shadow .2s}
 .input-group input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.input-row{display:flex;gap:.6rem;align-items:center}
+.input-row select{padding:.7rem .85rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:var(--font);font-size:.85rem;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
 .input-group .unit{font-size:.7rem;color:var(--text-muted);margin-top:.25rem}
 .btn-row{display:flex;gap:.75rem;margin-top:1.25rem;flex-wrap:wrap}
 .btn{flex:1;min-width:140px;padding:.85rem 1.2rem;border:none;border-radius:10px;font-family:var(--font);font-size:.9rem;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;display:inline-flex;align-items:center;justify-content:center;gap:.5rem;transition:transform .15s,box-shadow .3s,filter .2s;position:relative;overflow:hidden}
@@ -62,8 +64,14 @@ main{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-co
 .btn-reverse{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;box-shadow:0 4px 20px var(--yellow-glow)}
 .btn-reverse:hover{box-shadow:0 6px 30px rgba(245,158,11,.4);filter:brightness(1.1)}
 .dir-badge{display:inline-flex;align-items:center;gap:.35rem;padding:.3rem .8rem;border-radius:999px;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--surface2);border:1px solid var(--border);color:var(--yellow);margin-left:.5rem;transition:all .3s}
+.btn-schedule{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;box-shadow:0 4px 20px var(--yellow-glow)}
+.btn-schedule:hover{box-shadow:0 6px 30px rgba(245,158,11,.4);filter:brightness(1.1)}
+.btn-cancel{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.schedule-panel{grid-column:1}
 .schedule-status{display:flex;justify-content:space-between;gap:.5rem;margin-top:.75rem;font-size:.75rem;color:var(--text-muted);font-weight:600}
 .schedule-status strong{color:var(--yellow);font-weight:700}
+.schedule-counter{display:flex;justify-content:space-between;gap:.5rem;margin-top:.6rem;font-size:.85rem;font-weight:700;color:var(--text)}
+.schedule-counter span{color:var(--text-muted);font-weight:600}
 .monitor{grid-column:2}
 @media(max-width:860px){.monitor{grid-column:1}}
 .big-value{font-family:var(--mono);font-size:3.5rem;font-weight:700;text-align:center;padding:1rem 0 .25rem;color:var(--accent);text-shadow:0 0 30px var(--accent-glow);line-height:1}
@@ -111,17 +119,22 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
       <button class="btn btn-stop" id="btnStop" onclick="emergencyStop()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>Emergency Stop</button>
     </div>
     <div class="btn-row">
-      <button class="btn" style="background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff" onclick="scheduleStart()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8v5l3 3"/><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z" fill="none" stroke="currentColor" stroke-width="2"/></svg>Schedule Start</button>
-      <button class="btn" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);" onclick="cancelScheduledStart()">Cancel Schedule</button>
+      <button class="btn btn-reverse" id="btnReverse" onclick="reverseDirection()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Reverse Direction<span class="dir-badge" id="dirBadge">⬆ PULL</span></button>
+      <button class="btn" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);" onclick="resetVolume()">Reset Volume</button>
+    </div>
+  </div>
+  <div class="card schedule-panel" id="schedulePanel">
+    <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2 2"/></svg>Schedule</div>
+    <div class="input-group"><label for="scheduleDelay">Schedule Delay</label><div class="input-row"><input type="number" id="scheduleDelay" min="0" step="1" placeholder="0"><select id="scheduleUnit"><option value="seconds">Seconds</option><option value="minutes">Minutes</option></select></div><div class="unit">Set delay before auto-start</div></div>
+    <div class="btn-row">
+      <button class="btn btn-schedule" onclick="scheduleStart()"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8v5l3 3"/><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z" fill="none" stroke="currentColor" stroke-width="2"/></svg>Schedule Start</button>
+      <button class="btn btn-cancel" onclick="cancelScheduledStart()">Cancel Schedule</button>
     </div>
     <div class="schedule-status">
       <span id="scheduleStatusLabel">Schedule</span>
       <strong id="scheduleCountdown">Not set</strong>
     </div>
-    <div class="btn-row">
-      <button class="btn btn-reverse" id="btnReverse" onclick="reverseDirection()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Reverse Direction<span class="dir-badge" id="dirBadge">⬇ PUSH</span></button>
-      <button class="btn" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);" onclick="resetVolume()">Reset Volume</button>
-    </div>
+    <div class="schedule-counter" id="scheduleCounter"><span>Set</span><strong>0:00</strong></div>
   </div>
   <div class="card monitor" id="monitorPanel">
     <div class="card-title"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1 12 4 5 7 9 10 3 13 8 15 6"/></svg>Real-Time Monitoring</div>
@@ -144,13 +157,21 @@ footer{text-align:center;padding:1.5rem;font-size:.65rem;color:var(--text-muted)
 let pollingInterval=null,targetVolume=0,firstError=null;
 const elDelivered=document.getElementById('deliveredVal'),elFill=document.getElementById('progressFill'),elPct=document.getElementById('progressPct'),elTarget=document.getElementById('progressTarget'),elChip=document.getElementById('statusChip'),elChipText=document.getElementById('statusText'),elToast=document.getElementById('toast'),elDirBadge=document.getElementById('dirBadge');
 const elVol=document.getElementById('targetVol'),elRate=document.getElementById('flowRate'),elTime=document.getElementById('timeMins');
+const elScheduleDelay=document.getElementById('scheduleDelay'),elScheduleUnit=document.getElementById('scheduleUnit');
 const elScheduleLabel=document.getElementById('scheduleStatusLabel'),elScheduleCountdown=document.getElementById('scheduleCountdown');
+const elScheduleCounter=document.getElementById('scheduleCounter');
 const MAX_RATE=18.3,MIN_RATE=0.04;
 const alarms={occlusion:{card:document.getElementById('alarmOcclusion'),status:document.getElementById('occlusionStatus')},empty:{card:document.getElementById('alarmEmpty'),status:document.getElementById('emptyStatus')},tremor:{card:document.getElementById('alarmTremor'),status:document.getElementById('tremorStatus')}};
 function showToast(m,t){elToast.textContent=m;elToast.className='toast '+t+' show';setTimeout(()=>elToast.classList.remove('show'),3000)}
 
 function formatRemaining(ms){if(!ms||ms<=0)return'0:00';const totalSec=Math.ceil(ms/1000),min=Math.floor(totalSec/60),sec=totalSec%60;return min+':'+String(sec).padStart(2,'0')}
-function updateScheduleState(active,remainingMs){if(active){elScheduleLabel.textContent='Scheduled Start';elScheduleCountdown.textContent='in '+formatRemaining(remainingMs)}else{elScheduleLabel.textContent='Schedule';elScheduleCountdown.textContent='Not set'}}
+function getScheduleSeconds(){const rawValue=parseFloat(elScheduleDelay.value);if(!rawValue||rawValue<=0)return 0;return elScheduleUnit.value==='minutes'?rawValue*60:rawValue}
+function updateScheduleCounter(active,remainingMs){if(active){elScheduleCounter.innerHTML='<span>Remaining</span><strong>'+formatRemaining(remainingMs)+'</strong>';return}const seconds=getScheduleSeconds();const label=seconds>0?formatRemaining(seconds*1000):'0:00';elScheduleCounter.innerHTML='<span>Set</span><strong>'+label+'</strong>'}
+function updateScheduleState(active,remainingMs){if(active){elScheduleLabel.textContent='Scheduled Start';elScheduleCountdown.textContent='in '+formatRemaining(remainingMs)}else{elScheduleLabel.textContent='Schedule';elScheduleCountdown.textContent='Not set'}updateScheduleCounter(active,remainingMs)}
+
+elScheduleDelay.addEventListener('input',()=>updateScheduleCounter(false,0));
+elScheduleUnit.addEventListener('change',()=>updateScheduleCounter(false,0));
+updateScheduleCounter(false,0);
 
 function recalculateFields(source){
   let v=parseFloat(elVol.value),r=parseFloat(elRate.value),t=parseFloat(elTime.value);
@@ -191,11 +212,11 @@ async function startInfusion(){
   }catch(e){showToast('Failed to connect to pump.','error')}
 }
 async function emergencyStop(){try{await fetch('/emergency_stop',{method:'POST'})}catch(_){}stopPolling();setRunningState(false);showToast('EMERGENCY STOP activated!','error')}
-async function scheduleStart(){const minutes=parseFloat(elTime.value),v=parseFloat(elVol.value),r=parseFloat(elRate.value);if(!minutes||minutes<=0||!v||v<=0||!r||r<=0){showToast('Enter time, volume, and flow rate before scheduling.','error');return}try{const res=await fetch('/schedule_start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes,target_vol:v,flow_rate:r})});if(!res.ok)throw new Error();showToast('Auto-start scheduled.','success');startPolling()}catch(e){showToast('Failed to schedule start.','error')}}
-async function cancelScheduledStart(){try{const res=await fetch('/cancel_scheduled_start',{method:'POST'});if(!res.ok)throw new Error();updateScheduleState(false,0);showToast('Schedule cancelled.','success')}catch(e){showToast('Failed to cancel schedule.','error')}}
+async function scheduleStart(){const rawValue=parseFloat(elScheduleDelay.value),v=parseFloat(elVol.value),r=parseFloat(elRate.value),unit=elScheduleUnit.value,seconds=unit==='minutes'?rawValue*60:rawValue;if(!seconds||seconds<=0||!v||v<=0||!r||r<=0){showToast('Enter time, volume, and flow rate before scheduling.','error');return}try{const res=await fetch('/schedule_start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seconds,target_vol:v,flow_rate:r})});if(!res.ok)throw new Error();showToast('Auto-start scheduled.','success');updateScheduleCounter(true,seconds*1000);startPolling()}catch(e){showToast('Failed to schedule start.','error')}}
+async function cancelScheduledStart(){try{const res=await fetch('/cancel_scheduled_start',{method:'POST'});if(!res.ok)throw new Error();updateScheduleState(false,0);updateScheduleCounter(false,0);showToast('Schedule cancelled.','success')}catch(e){showToast('Failed to cancel schedule.','error')}}
 async function resetVolume(){try{const res=await fetch('/reset_volume',{method:'POST'});if(res.ok){showToast('Volume reset to 0 mL','success');fetchStatus()}}catch(e){}}
-async function reverseDirection(){try{const res=await fetch('/reverse_direction',{method:'POST'});if(!res.ok)throw new Error();const d=await res.json();const dir=d.direction||'unknown';updateDirBadge(dir.includes('PUSH')||dir.includes('push')?'push':'pull');showToast('Direction: '+dir,'success')}catch(e){showToast('Failed to reverse direction.','error')}}
-function updateDirBadge(dir){if(dir==='push'){elDirBadge.textContent='\u2B07 PUSH';elDirBadge.style.color='var(--yellow)'}else{elDirBadge.textContent='\u2B06 PULL';elDirBadge.style.color='var(--accent)'}}
+async function reverseDirection(){try{const res=await fetch('/reverse_direction',{method:'POST'});if(!res.ok)throw new Error();const d=await res.json();const dir=d.direction||'unknown';updateDirBadge(dir.includes('PUSH')||dir.includes('push')?'push':'puSH');showToast('Direction: '+dir,'success')}catch(e){showToast('Failed to reverse direction.','error')}}
+function updateDirBadge(dir){if(dir==='push'){elDirBadge.textContent='\u2B06 PULL';elDirBadge.style.color='var(--accent)'}else{elDirBadge.textContent='\u2B07 PUSH';elDirBadge.style.color='var(--yellow)'}}
 function startPolling(){stopPolling();pollingInterval=setInterval(fetchStatus,500)}
 function stopPolling(){if(pollingInterval){clearInterval(pollingInterval);pollingInterval=null}}
 async function fetchStatus(){try{const res=await fetch('/status');if(!res.ok)throw new Error();const d=await res.json();updateUI(d)}catch(_){}}
